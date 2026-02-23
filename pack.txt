@@ -1,0 +1,2 @@
+pyinstaller --noconsole --onedir --name="CSGO_Python" --collect-all=panda3d --collect-all=ursina main.py
+执行完成之后需要将assets的内容放入到和CSGO_Python的同级目录下
