@@ -43,20 +43,20 @@ class EnemyBullet(Entity):
 
 class Enemy(Entity):
     def __init__(self, position=(0,0,0), player_target=None):
-        super().__init__(position=position, name='enemy')
+        super().__init__(position=position, name='enemy')  # 移除主碰撞体，避免移动问题
         self.player = player_target
         self.hp = Config.ENEMY_HP
         self.max_hp = Config.ENEMY_HP
         self.cooldown_t = 2
         
         # 改进的人形模型
-        # 身体（躯干）- 红色上衣
+        # 身体（躯干）- 红色上衣，带碰撞体
         self.body = Entity(parent=self, model='cube', color=color.red, scale=(0.8, 1.2, 0.5), 
                            position=(0, 1.2, 0), collider='box')
         
-        # 头部 - 肤色
+        # 头部 - 肤色，添加碰撞体以便可以爆头
         self.head = Entity(parent=self, model='cube', color=color.rgb(220, 180, 140), scale=(0.5, 0.5, 0.5),
-                          position=(0, 2.2, 0))
+                          position=(0, 2.2, 0), collider='box')
         # 眼睛
         Entity(parent=self.head, model='cube', color=color.black, scale=(0.15, 0.15, 0.05), position=(-0.15, 0.05, 0.26))
         Entity(parent=self.head, model='cube', color=color.black, scale=(0.15, 0.15, 0.05), position=(0.15, 0.05, 0.26))
@@ -74,10 +74,10 @@ class Enemy(Entity):
         Entity(parent=self.gun_model, model='cube', scale=(0.2, 0.2, 1.8), color=color.dark_gray)
         Entity(parent=self.gun_model, model='cube', scale=(0.15, 0.3, 0.2), position=(0, -0.15, 0), color=color.black)
         
-        # 头顶血条
+        # 头顶血条（简化，使用 billboard）
         self.health_bar_parent = Entity(parent=self, position=(0, 2.8, 0), billboard=True)
-        Entity(parent=self.health_bar_parent, model='quad', color=color.black, scale=(1.2, 0.15))
-        self.hp_bar = Entity(parent=self.health_bar_parent, model='quad', color=color.lime, 
+        self.hp_bar_bg = Entity(parent=self.health_bar_parent, model='quad', color=color.black, scale=(1.2, 0.15))
+        self.hp_bar = Entity(parent=self.health_bar_parent, model='quad', color=color.green, 
                              scale=(1.2, 0.15), origin_x=-0.5, position=(-0.6, 0, -0.01))
 
         self.sfx_shoot = safe_load_audio('assets/shot.wav')
@@ -89,8 +89,45 @@ class Enemy(Entity):
         dist = distance_xz(self.position, self.player.position)
         self.look_at_2d(self.player.position, 'y')
 
-        if dist > 8: 
-            self.position += self.forward * time.dt * Config.ENEMY_SPEED
+        # 移动前检测前方是否有障碍物
+        if dist > 8:
+            # 使用射线检测前方是否有墙
+            move_direction = self.forward * Config.ENEMY_SPEED * time.dt
+            
+            # 检测前方 1 单位距离
+            hit_info = raycast(
+                origin=self.position + Vec3(0, 1, 0),  # 从身体中心发射
+                direction=self.forward,
+                distance=1.5,  # 检测距离
+                ignore=[self, self.body, self.head]  # 忽略自己
+            )
+            
+            # 如果前方没有障碍物，才移动
+            if not hit_info.hit:
+                self.position += move_direction
+            else:
+                # 如果撞墙，尝试绕过（左右移动）
+                # 尝试向左
+                left_dir = Vec3(-self.forward.z, 0, self.forward.x).normalized()
+                hit_left = raycast(
+                    origin=self.position + Vec3(0, 1, 0),
+                    direction=left_dir,
+                    distance=1,
+                    ignore=[self, self.body, self.head]
+                )
+                if not hit_left.hit:
+                    self.position += left_dir * Config.ENEMY_SPEED * time.dt * 0.5
+                else:
+                    # 尝试向右
+                    right_dir = Vec3(self.forward.z, 0, -self.forward.x).normalized()
+                    hit_right = raycast(
+                        origin=self.position + Vec3(0, 1, 0),
+                        direction=right_dir,
+                        distance=1,
+                        ignore=[self, self.body, self.head]
+                    )
+                    if not hit_right.hit:
+                        self.position += right_dir * Config.ENEMY_SPEED * time.dt * 0.5
         
         self.cooldown_t -= time.dt
         if self.cooldown_t <= 0 and dist < 20:
@@ -121,15 +158,18 @@ class Enemy(Entity):
         
         self.hp -= amount
         
-        # 更新血条
+        # 更新血条（使用简单可靠的方式）
         if self.hp_bar:
             ratio = max(0, self.hp / self.max_hp)
             self.hp_bar.scale_x = 1.2 * ratio
             
+            # 根据血量设置颜色（使用简单的颜色值）
             if ratio < 0.3:
                 self.hp_bar.color = color.red
+            elif ratio < 0.6:
+                self.hp_bar.color = color.orange
             else:
-                self.hp_bar.color = color.lime
+                self.hp_bar.color = color.green
 
         self.body.blink(color.white, duration=0.1)
         

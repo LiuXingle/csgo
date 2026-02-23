@@ -136,25 +136,51 @@ class PlayerBullet(Entity):
             safe_destroy(self)
             return
 
+        # 改进的碰撞检测
+        hit_enemy = None
+        is_headshot = False
+        
         for e in list(scene.entities):
             if not e or not e.enabled: continue
+            
+            # 检测敌人主体
             if e.name == 'enemy':
                 dist_sq = (e.position - self.position).length_squared()
                 if dist_sq < 3.0:
-                    if hasattr(e, 'take_damage'):
-                        e.take_damage(Config.DMG)
-                        
-                        # 播放击中音效
-                        if self.hit_sound:
-                            self.hit_sound.pitch = random.uniform(0.9, 1.1)
-                            self.hit_sound.stop()
-                            self.hit_sound.play()
-                        
-                        # 击中特效
-                        ImpactEffect(position=self.position, normal=(self.position - e.position).normalized())
-                            
-                        safe_destroy(self)
-                        return
+                    hit_enemy = e
+                    break
+            
+            # 检测敌人的身体部位（优先级更高）
+            if hasattr(e, 'parent') and e.parent and hasattr(e.parent, 'name') and e.parent.name == 'enemy':
+                # 计算世界坐标距离
+                if hasattr(e, 'world_position'):
+                    dist_sq = (e.world_position - self.position).length_squared()
+                    if dist_sq < 1.0:  # 更精确的检测
+                        hit_enemy = e.parent
+                        # 判断是否爆头
+                        if hasattr(e.parent, 'head') and e == e.parent.head:
+                            is_headshot = True
+                        break
+        
+        # 处理击中
+        if hit_enemy and hasattr(hit_enemy, 'take_damage'):
+            damage = Config.DMG
+            if is_headshot:
+                damage = Config.DMG * 2
+                print("HEADSHOT!")
+            
+            hit_enemy.take_damage(damage)
+            
+            # 播放击中音效
+            if self.hit_sound:
+                self.hit_sound.pitch = random.uniform(0.9, 1.1)
+                self.hit_sound.stop()
+                self.hit_sound.play()
+            
+            # 击中特效
+            ImpactEffect(position=self.position, normal=(self.position - hit_enemy.position).normalized())
+                
+            safe_destroy(self)
 
 class AK47(Entity):
     def __init__(self, parent_camera):
@@ -196,9 +222,18 @@ class AK47(Entity):
         self.recoil_offset = Vec3(0, 0, 0)
         self.is_reloading = False  # 新增：换弹状态标记
         
-        # 加载音效
+        # 加载音效（尝试多种格式）
         self.sfx_shoot = safe_load_audio('assets/shot.wav')
-        self.sfx_reload = safe_load_audio('assets/reload.wav')  # 使用真正的 reload.wav
+        # 尝试加载 reload 音效（支持 wav, mp3, ogg）
+        self.sfx_reload = safe_load_audio('assets/reload.wav')
+        if not self.sfx_reload:
+            self.sfx_reload = safe_load_audio('assets/reload.mp3')
+        if not self.sfx_reload:
+            self.sfx_reload = safe_load_audio('assets/reload.ogg')
+        # 如果都没有，临时使用 shot.wav（音调降低）
+        if not self.sfx_reload:
+            print("警告: 找不到 reload 音效，使用 shot.wav 代替")
+            self.sfx_reload = safe_load_audio('assets/shot.wav')
         self.sfx_hit = safe_load_audio('assets/hit.wav')
 
     def shoot(self):
@@ -256,22 +291,28 @@ class AK47(Entity):
         self.is_reloading = True
         self.ammo = Config.AMMO_CAPACITY
         
-        # 播放换弹音效
-        reload_duration = 1.0  # 默认换弹时长
+        # 播放换弹音效并获取时长
+        reload_duration = 2.0  # 默认换弹时长
         if self.sfx_reload:
             self.sfx_reload.play()
-            # 尝试获取音效实际时长（如果可用）
-            if hasattr(self.sfx_reload, 'length'):
-                reload_duration = self.sfx_reload.length()
-            else:
-                # 估算：大多数换弹音效在 1.5-2.5 秒之间
+            # 尝试获取音效实际时长（length 是属性，不是方法）
+            try:
+                if hasattr(self.sfx_reload, 'length') and self.sfx_reload.length:
+                    reload_duration = self.sfx_reload.length
+                elif hasattr(self.sfx_reload, 'duration') and self.sfx_reload.duration:
+                    reload_duration = self.sfx_reload.duration
+            except:
+                # 如果获取失败，使用默认值
                 reload_duration = 2.0
         
         # 显示换弹提示（通过玩家的 HUD 引用）
-        if hasattr(camera, 'parent') and hasattr(camera.parent, 'parent'):
-            player = camera.parent.parent
-            if hasattr(player, 'hud_ref') and player.hud_ref:
-                player.hud_ref.show_reload_indicator(reload_duration)
+        try:
+            if hasattr(camera, 'parent') and hasattr(camera.parent, 'parent'):
+                player = camera.parent.parent
+                if hasattr(player, 'hud_ref') and player.hud_ref:
+                    player.hud_ref.show_reload_indicator(reload_duration)
+        except:
+            pass  # 如果无法访问 HUD，继续换弹
         
         # 换弹动画
         self.gun_root.animate_rotation((30, 0, -30), duration=reload_duration * 0.4, curve=curve.in_out_cubic)

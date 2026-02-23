@@ -46,15 +46,52 @@ class LevelManager(Entity):
         invoke(setattr, self.wave_text, 'enabled', False, delay=2.5)
         invoke(setattr, self.wave_subtitle, 'enabled', False, delay=2.5)
         
-        for i in range(count):
+        # 生成敌人，确保不在墙里
+        spawned = 0
+        max_attempts = count * 10  # 最多尝试次数
+        attempts = 0
+        
+        while spawned < count and attempts < max_attempts:
+            attempts += 1
+            
+            # 随机选择生成区域
             area = random.choice(self.spawn_areas)
             x = area[0] + random.randint(-5, 5)
             z = area[1] + random.randint(-5, 5)
-            spawn_pos = (x, 0, z)
+            spawn_pos = Vec3(x, 0, z)
             
-            e = Enemy(position=spawn_pos, player_target=self.player)
-            e.hp *= (1 + self.wave * 0.1)
-            self.enemies_alive.append(e)
+            # 检查该位置是否有障碍物
+            # 向上发射射线，检查是否在墙里
+            hit_check = raycast(
+                origin=spawn_pos + Vec3(0, 1, 0),
+                direction=Vec3(0, 1, 0),
+                distance=0.5,
+                ignore=[]
+            )
+            
+            # 检查周围是否有墙
+            is_valid = True
+            for direction in [Vec3(1,0,0), Vec3(-1,0,0), Vec3(0,0,1), Vec3(0,0,-1)]:
+                hit = raycast(
+                    origin=spawn_pos + Vec3(0, 1, 0),
+                    direction=direction,
+                    distance=1.5,
+                    ignore=[]
+                )
+                if hit.hit and hit.distance < 1.0:
+                    is_valid = False
+                    break
+            
+            # 如果位置有效，生成敌人
+            if is_valid and not hit_check.hit:
+                e = Enemy(position=spawn_pos, player_target=self.player)
+                e.hp *= (1 + self.wave * 0.1)
+                self.enemies_alive.append(e)
+                spawned += 1
+        
+        # 如果无法生成足够的敌人，至少生成一些
+        if spawned < count:
+            print(f"Warning: Only spawned {spawned}/{count} enemies due to space constraints")
 
     def update(self):
         self.enemies_alive = [e for e in self.enemies_alive if e and e.enabled]
